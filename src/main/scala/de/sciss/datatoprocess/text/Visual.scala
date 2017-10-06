@@ -228,8 +228,9 @@ object Visual {
       _text = value
 
       import kollflitz.Ops._
-      val x0      = value.replace('\n', ' ').replace("  ", " ")
-      val words   = x0.toVector.groupWith { (a, b) =>
+      val x0      = value // .replace("\n\n", "$ ")
+      val x1      = x0.replace('\n', ' ').replace("  ", " ")
+      val words   = x1.toVector.groupWith { (a, b) =>
         a.isLetterOrDigit && b.isLetterOrDigit
       } .map(_.mkString).toVector
       // val lines: Vec[Vec[String]] = words1.grouped(5).toVector
@@ -262,7 +263,9 @@ object Visual {
       def similarity(a: String, b: String): Int =
         (a zip b).count { case (ac, bc) => Character.toLowerCase(ac) == Character.toLowerCase(bc) }
 
-      val ws = words.map { word =>
+      val ws = words.map { word0 =>
+        val breaks  = word0.endsWith("$")
+        val word    = if (breaks) word0.substring(0, word0.length - 1) else word0
         val wordRef = new AnyRef
         val vs      = word.map { c =>
           val vv = VisualVertex(this, lineRef = lineRef0, wordRef = wordRef, character = c)
@@ -278,14 +281,16 @@ object Visual {
 
           // println(s"FOR NEW WORD $word - BEST MATCH IS $key")
 
-          (vs zip positions.padTo(vs.length, positions.last)).foreach { case (vv, (x, y)) =>
-            val vi = _vis.getVisualItem(GROUP_NODES, vv.pNode)
-            vi.setX(x)
-            vi.setY(y)
-            vi.setStartX(x)
-            vi.setStartY(y)
-            vi.setEndX(x)
-            vi.setEndY(y)
+          if (positions.nonEmpty) {
+            (vs zip positions.padTo(vs.length, positions.last)).foreach { case (vv, (x, y)) =>
+              val vi = _vis.getVisualItem(GROUP_NODES, vv.pNode)
+              vi.setX(x)
+              vi.setY(y)
+              vi.setStartX(x)
+              vi.setStartY(y)
+              vi.setEndX(x)
+              vi.setEndY(y)
+            }
           }
         }
 
@@ -295,10 +300,10 @@ object Visual {
         val w  = new Word(vs, word)
         wordMap += word -> (w :: wordMap.getOrElse(word, Nil))
         wordVec :+= w
-        w
+        (w, breaks)
       }
 
-      @tailrec def mkLines(words: Vec[Word], rem: Vec[Word], width: Int, res: Vec[Line]): Vec[Line] = {
+      @tailrec def mkLines(words: Vec[Word], rem: Vec[(Word, Boolean)], width: Int, res: Vec[Line]): Vec[Line] = {
         def flush(): Line = {
           words.foreachPair { (pred, succ) =>
             val n1 = pred.letters.last.pNode
@@ -311,12 +316,15 @@ object Visual {
         }
 
         // note: we allow the last word to exceed the maximum width
-        if (width > _lineWidth && rem.headOption.map(_.letters.size).getOrElse(0) > 1) {
+        if (width > _lineWidth && rem.headOption.map(_._1.letters.size).getOrElse(0) > 1) {
           val line = flush()
           mkLines(Vector.empty, rem, 0, res :+ line)
         } else rem match {
-          case head +: tail =>
+          case (head, false) +: tail =>
             mkLines(words :+ head, tail, width + head.width, res)
+          case (_, true ) +: tail =>
+            val line = flush()
+            mkLines(Vector.empty, tail, 0, res :+ line)
           case _ =>
             val line = flush()
             res :+ line
@@ -698,7 +706,7 @@ object Visual {
 
         // _dsp.zoom(p0, 1.0/scale)
         // actionAutoZoom.karlHeinz = 1.0
-        ImageIO.write(bImg, "png", file)
+        if (file != null) ImageIO.write(bImg, "png", file)
       } finally {
         g.dispose()
       }
@@ -769,31 +777,9 @@ object Visual {
 
           import numbers.Implicits._
 
-          def mix(a: Situation, b: Situation, w2: Double): Situation = {
-            val w1              = 1.0 - w2
-            val text            = if (w2 < 1) a.text             else b.text
-            val lineWidth       = if (w2 < 1) a.config.lineWidth else b.config.lineWidth
-            val size            = (a.config.size      * w1 + b.config.size       * w2 + 0.5).toInt
-            val speedLimit      = a.config.speedLimit * w1 + b.config.speedLimit * w2
-            val noise           = a.config.noise      * w1 + b.config.noise      * w2
-            val threshold       = (a.config.threshold * w1 + b.config.threshold  * w2 + 0.5).toInt
-            val config          = Config(size = size, lineWidth = lineWidth, speedLimit = speedLimit,
-              noise = noise, threshold = threshold)
-            val forceParameters = a.forceParameters.map { case (key, map1) =>
-              val map2 = b.forceParameters.getOrElse(key, map1)
-              val newValues = map1.map { case (key2, v1) =>
-                val v2 = map2.getOrElse(key2, v1)
-                val vMix = v1 * w1 + v2 * w2
-                (key2, vMix.toFloat)
-              }
-              (key, newValues)
-            }
-            Situation(config = config, forceParameters = forceParameters, text = text)
-          }
-
           val animFrac = frame.clip(startAnim.frame, stopAnim.frame)
             .linlin(startAnim.frame, math.max(startAnim.frame + 1, stopAnim.frame), 0, 1)
-          val thisSit = mix(startAnim.situation, stopAnim.situation, animFrac)
+          val thisSit = Situation.mix(startAnim.situation, stopAnim.situation, animFrac)
 
           execOnEDT {
             noise       = thisSit.config.noise
@@ -802,21 +788,24 @@ object Visual {
             text        = thisSit.text
             imageSize   = new Dimension(thisSit.config.size, thisSit.config.size)
             forceSimulator.setSpeedLimit(thisSit.config.speedLimit.toFloat)
+            _lay.stepSize = thisSit.config.stepSize
             forceParameters = thisSit.forceParameters
           }
 
           val frameSave = frame - skipFrames
-          if (frameSave >= 0) {
-            val f = mkF()
-            execOnEDT {
-              saveFrameAsPNG(f, width = thisSit.config.size, height = thisSit.config.size)
-              // _dsp.damageReport() // force complete redrawing
-              // _dsp.paintDisplay(g, new Dimension(width, height))
-              // ImageIO.write(bImg, "png", f)
-            }
-          }
           execOnEDT {
-            animationStep()
+            if (frameSave >= 0) {
+              val f = mkF() // if (stepI == 0) mkF() else null
+              saveFrameAsPNG(f, width = thisSit.config.size, height = thisSit.config.size)
+                // _dsp.damageReport() // force complete redrawing
+                // _dsp.paintDisplay(g, new Dimension(width, height))
+                // ImageIO.write(bImg, "png", f)
+            }
+//            var stepI = 0
+//            while (stepI < thisSit.config.stepSize) {
+              animationStep()
+//              stepI += 1
+//            }
           }
 
           frame += 1
@@ -852,7 +841,11 @@ object Visual {
                 case NonFatal(e) => e.printStackTrace()
               }
               saveFrameAsPNG(f, width = lastSit.config.size, height = lastSit.config.size)
-              animationStep()
+              var i = 0
+              while (i < lastSit.config.stepSize) {
+                animationStep()
+                i += 1
+              }
             }
             frame += 1
             loopPlop(tail)

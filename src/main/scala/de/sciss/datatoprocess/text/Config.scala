@@ -21,10 +21,33 @@ object Config {
   implicit val format: Format[Config] = AutoFormat[Config]
 }
 case class Config(size: Int, lineWidth: Int,
-                  speedLimit: Double, noise: Double, threshold: Int)
+                  speedLimit: Double, noise: Double, threshold: Int, stepSize: Int)
 
 object Situation {
   implicit val format: Format[Situation] = AutoFormat[Situation]
+
+  def mix(a: Situation, b: Situation, w2: Double): Situation = {
+    val w1              = 1.0 - w2
+    val text            = if (w2 < 1) a.text             else b.text
+    val lineWidth       = if (w2 < 1) a.config.lineWidth else b.config.lineWidth
+    val size            = (a.config.size      * w1 + b.config.size       * w2 + 0.5).toInt
+    val speedLimit      = a.config.speedLimit * w1 + b.config.speedLimit * w2
+    val noise           = a.config.noise      * w1 + b.config.noise      * w2
+    val threshold       = (a.config.threshold * w1 + b.config.threshold  * w2 + 0.5).toInt
+    val stepSize        = (a.config.stepSize  * w1 + b.config.stepSize   * w2 + 0.5).toInt
+    val config          = Config(size = size, lineWidth = lineWidth, speedLimit = speedLimit,
+      noise = noise, threshold = threshold, stepSize = stepSize)
+    val forceParameters = a.forceParameters.map { case (key, map1) =>
+      val map2 = b.forceParameters.getOrElse(key, map1)
+      val newValues = map1.map { case (key2, v1) =>
+        val v2 = map2.getOrElse(key2, v1)
+        val vMix = v1 * w1 + v2 * w2
+        (key2, vMix.toFloat)
+      }
+      (key, newValues)
+    }
+    Situation(config = config, forceParameters = forceParameters, text = text)
+  }
 }
 case class Situation(config: Config, forceParameters: Map[String, Map[String, Float]], text: String) {
   override def toString = s"[$config, $forceParameters, $text]"

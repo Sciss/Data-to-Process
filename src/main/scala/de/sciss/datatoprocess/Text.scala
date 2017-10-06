@@ -17,10 +17,10 @@ import java.io.{FileInputStream, FileOutputStream}
 import javax.swing.event.{DocumentEvent, DocumentListener}
 import javax.swing.{KeyStroke, Timer, UIManager}
 
+import de.sciss.datatoprocess.text.{Anim, Config, KeyFrame, Situation}
 import de.sciss.desktop.{FileDialog, OptionPane}
 import de.sciss.file._
 import de.sciss.guiflitz.AutoView
-import de.sciss.datatoprocess.text.{Anim, Config, KeyFrame, Situation}
 import de.sciss.processor.Processor
 import de.sciss.processor.impl.ProcessorImpl
 import de.sciss.swingplus.ListView
@@ -31,7 +31,7 @@ import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future, blocking}
 import scala.swing.Swing._
 import scala.swing.event.ButtonClicked
-import scala.swing.{Action, BorderPanel, BoxPanel, Button, Component, FlowPanel, Frame, Label, Menu, MenuBar, MenuItem, Orientation, ProgressBar, ScrollPane, TextArea, ToggleButton}
+import scala.swing.{Action, BorderPanel, BoxPanel, Button, Component, FlowPanel, Frame, Label, Menu, MenuBar, MenuItem, Orientation, ProgressBar, ScrollPane, Slider, TextArea, ToggleButton}
 import scala.util.Failure
 import scala.util.control.NonFatal
 
@@ -41,6 +41,7 @@ object Text {
   def runGUI(block: => Unit): Unit =
     onEDT {
       try {
+//        UIManager.setLookAndFeel(classOf[MetalLookAndFeel].getName)
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName)
       } catch {
         case NonFatal(_) => // ignore
@@ -72,7 +73,9 @@ object Text {
     dlg.setVisible(true)
   }
 
-  def main(args: Array[String]): Unit = runGUI(mkFrame())
+  def main(args: Array[String]): Unit = {
+    runGUI(mkFrame())
+  }
 
   case class MovieConfig(duration: Double = 60.0, fps: Int = 25, skipFrames: Int = 0)
 
@@ -83,10 +86,14 @@ object Text {
 
     val avCfg   = AutoView.Config()
     avCfg.small = true
-    val cfg0    = Config(size = 2160, lineWidth = 160 /* 320 */, speedLimit = 0.1, noise = 0, threshold = 0)
+    val cfg0    = Config(size = 2160, lineWidth = 160 /* 320 */, speedLimit = 0.1, noise = 0, threshold = 0, stepSize = 1)
     val cfgView = AutoView(cfg0, avCfg)
 
-    val ggText = new TextArea(8, 40)
+    val ggText  = new TextArea(12, 40)
+    val scrText = ggText
+//    val scrText = new ScrollPane(ggText)
+//    scrText.verticalScrollBarPolicy = ScrollPane.BarPolicy.Always
+//    ggText.lineWrap = true
 
     def textUpdated(): Unit = {
       val newText = ggText.text
@@ -179,6 +186,25 @@ object Text {
         setSituation(sit)
       }
     }
+    lazy val ggInterpolate: Button = Button("Interpolate…") {
+      ggSnapshots.selection.indices.toList match {
+        case row1 :: row2:: Nil =>
+          val sit1  = mSnapshots(row1).situation
+          val sit2  = mSnapshots(row2).situation
+          val mAmt  = new Slider
+          mAmt.min  = 0
+          mAmt.max  = 100
+          val opt   = OptionPane(message = mAmt, optionType = OptionPane.Options.OkCancel)
+          val res   = opt.show(title = "Interpolation Position")
+          if (res == OptionPane.Result.Ok) {
+            import de.sciss.numbers.Implicits._
+            val w2    = mAmt.value.linlin(mAmt.min, mAmt.max, 0, 1)
+            val sit   = Situation.mix(sit1, sit2, w2)
+            setSituation(sit)
+          }
+        case _ =>
+      }
+    }
 
     lazy val pSnapshots: Component = new ScrollPane(ggSnapshots)
 
@@ -225,12 +251,12 @@ object Text {
 
     lazy val pBottom: Component = new BoxPanel(Orientation.Vertical) {
       contents += new FlowPanel(ggAutoZoom, ggRunAnim, HStrut(16),
-        new Label("Key Frames:"), ggAddSnapshot, ggMoveSnapshot, ggRecallSnapshot, HStrut(16), ggRemoveSnapshot)
+        new Label("Key Frames:"), ggAddSnapshot, ggMoveSnapshot, ggRecallSnapshot, HStrut(16), ggRemoveSnapshot, ggInterpolate)
     }
     lazy val pRight: BoxPanel = new BoxPanel(Orientation.Vertical) {
       contents += VStrut(16)  // will be replaced
       contents += cfgView.component
-      contents += ggText
+      contents += scrText //  ggText
     }
 
     // stupidly, it doesn't listen for model changes

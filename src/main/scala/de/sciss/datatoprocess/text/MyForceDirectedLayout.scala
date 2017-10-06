@@ -52,11 +52,22 @@ class MyForceDirectedLayout(main: Visual)
     }
   }
 
-  private var _counter = 0
+  private[this] var _counter = 0
+
+  private[this] var _stepSize = 1
+
+  def stepSize: Int = _stepSize
+  def stepSize_=(value: Int): Unit = _stepSize = value
 
   override def run(frac: Double): Unit = {
-    _counter += 1
-    super.run(frac)
+//    println(f"run($frac%g), counter = ${_counter}")
+    var i = 0
+    val n = _stepSize
+    while (i < n) {
+      super.run(frac)
+      i += 1
+    }
+    _counter += n
   }
 
   def counter: Int = _counter
